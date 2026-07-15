@@ -22,7 +22,7 @@ frontend/.next/
 frontend/out/
 
 # Data & runtime state
-data/
+/data/
 logs/
 backups/
 *.db
