@@ -1,0 +1,31 @@
+# Risk Engine limits. Every order passes through these — no exceptions.
+account:
+  max_daily_loss_pct: 3.0          # circuit breaker: halts ALL trading for the day
+  max_drawdown_pct: 15.0           # halt + manual re-arm required
+  max_leverage: 1.0                # cash only
+position:
+  risk_per_trade_pct: 0.75         # fixed fractional risk of equity
+  max_position_pct: 10.0           # of equity, per position
+  max_open_positions_global: 8
+  max_open_positions_per_strategy: 3
+  min_notional_usd: 10.0           # crypto fractional orders below this are dust
+stops:
+  method: atr                      # volatility-based stops by default
+  atr_period: 14
+  atr_multiplier: 2.0
+  take_profit_r_multiple: 2.0      # TP at 2R by default
+  trailing: false
+portfolio:
+  max_heat_pct: 5.0                # sum of open risk (stop distance x size)
+  max_correlated_exposure: 0.7     # 60-day return correlation threshold
+  correlation_lookback_days: 60
+  max_sector_exposure_pct: 30.0
+cooldown:
+  consecutive_losses: 4
+  pause_minutes: 240
+trading_hours:
+  enforce: true
+  timezone: America/New_York       # exchange local time, DST-aware
+  session_start: "09:30"
+  session_end: "16:00"
+  crypto_exempt: true              # crypto trades 24/7 — session gate skipped

@@ -1,0 +1,47 @@
+# Market data configuration — no magic numbers in code.
+# simulated: deterministic synthetic bars, zero API keys — paper trading works
+#            out of the box. Switch to alpaca once ALPACA_PAPER_* keys are set.
+provider: alpaca            # simulated | alpaca
+benchmark_symbol: SPY
+starting_cash: 100000.0     # paper account starting equity
+universe:
+  - SPY
+  - QQQ
+  - AAPL
+  - MSFT
+  - NVDA
+intervals:
+  default: 1h
+  regime: [1h, 1d]
+history:
+  backfill_years: 5
+  adjust: all               # split + dividend adjusted; raw preserved in DB
+data_quality:
+  max_bar_age_multiplier: 2.0     # last bar older than 2x interval => stale
+  max_gap_bars: 3
+  min_volume: 1
+session:
+  timezone: America/New_York
+  open: "09:30"
+  close: "16:00"
+# Simulated-provider tuning (provider: simulated only). Deterministic per
+# symbol; regime classifies TREND_UP so the baseline strategies exercise the
+# full funnel without any external data.
+simulator:
+  history_days: 600
+  daily_trend: 0.002
+  hourly_drift: 0.0012
+  pullback_amplitude: 0.015
+  pullback_period_bars: 10
+  start_price: 100.0
+# Market Regime Detection thresholds (MVP §7) — consumed by RegimeDetector.
+regime:
+  adx_period: 14
+  adx_trend_min: 25          # ADX above this => a directional trend is present
+  adx_range_max: 20          # ADX below this => directionless (RANGE)
+  ema_fast: 50
+  ema_slow: 200
+  ema_slope_lookback: 5
+  realized_vol_period: 20
+  realized_vol_lookback_days: 252
+  high_vol_percentile: 90    # vol percentile above this => HIGH_VOL (overrides)

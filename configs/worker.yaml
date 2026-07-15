@@ -1,0 +1,24 @@
+# Worker runtime configuration — no magic numbers in code.
+worker:
+  poll_seconds: 2.0            # sim-mode cycle cadence (one replayed bar per cycle)
+  poll_seconds_wallclock: 15.0 # alpaca-mode poll interval. Must stay under
+                               # heartbeat.timeout_seconds (worker beats once per
+                               # cycle) and high enough to respect Alpaca's
+                               # ~200 req/min free-tier data rate limit
+  backfill_daily_bars: 420     # daily history backfill (needs >= 200 for EMA200/confluence)
+  backfill_intraday_days: 120  # intraday history backfill window
+  sim_start_bars_back: 240     # simulated mode: how many session bars before the
+                               # data anchor the sim clock starts (the "live" replay)
+  reconcile_every_cycles: 10   # broker-truth reconciliation cadence
+  equity_curve_cap: 500        # points of equity curve published to the dashboard
+  signal_log_cap: 200          # recent signal rows kept in dashboard state
+  alert_log_cap: 100
+
+persistence:
+  flush_seconds: 5.0           # journal/portfolio flush cadence to the database
+
+strategy_toggles:
+  # Runtime enable/disable overrides ({strategy_id: bool}) written by the
+  # dashboard API and polled by the worker each cycle — cross-process, like
+  # the KILL file. Disabling stops new signals; protective stops keep running.
+  file_path: data/strategy_toggles.json

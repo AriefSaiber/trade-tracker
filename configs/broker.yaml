@@ -1,0 +1,37 @@
+# Broker configuration. Credentials live ONLY in .env.
+active: alpaca
+paper_mode: true            # paper is the default state of the system, always
+alpaca:
+  paper_base_url: https://paper-api.alpaca.markets
+  live_base_url: https://api.alpaca.markets
+  # Account trade-updates websocket (order lifecycle). Paper/live differ only here.
+  paper_stream_url: wss://paper-api.alpaca.markets/stream
+  live_stream_url: wss://api.alpaca.markets/stream
+  data_url: https://data.alpaca.markets
+  # Market-data feed: iex (free plan) | sip (paid subscription). Requesting
+  # sip on the free plan 403s whenever the window touches the last 15 minutes.
+  data_feed: iex
+  # Crypto data: separate endpoint family, no feed param, symbols like BTC/USD
+  crypto_bars_path: /v1beta3/crypto/us/bars
+  crypto_stream_url: wss://stream.data.alpaca.markets/v1beta3/crypto/us
+  commission_per_share: 0.0
+  min_commission: 0.0
+idempotency:
+  # client_order_id -> broker_order_id cached in Redis so a retry (even across a
+  # process restart) can never create a duplicate order. TTL >> max order lifetime.
+  redis_key_prefix: "alpaca:idempotency:"
+  ttl_seconds: 604800        # 7 days
+paper_simulator:
+  slippage_bps: 3           # applied to paper fills so paper ≈ live
+  crypto_slippage_bps: 10   # crypto spreads are wider than iex equities
+  crypto_fee_bps: 25        # Alpaca crypto taker fee ~0.25% of notional
+  latency_ms: 300
+  partial_fill_probability: 0.05
+reconciliation:
+  interval_minutes: 5
+  on_mismatch: block_new_entries   # broker state is authoritative
+  qty_tolerance: 0.000001          # ignore float dust when comparing quantities
+order_defaults:
+  time_in_force: day
+  retry_max_attempts: 3
+  retry_backoff_base_seconds: 1.0

@@ -1,0 +1,42 @@
+# Algorithm GPT-Pro — robust momentum pullback (algorithm_model/STRATEGY_SPEC.md).
+# Long-only, daily-computed conditions, intraday breakout entry. Defaults below
+# mirror the spec's "Default selected starting configuration".
+strategy_id: gpt_pro
+name: Algorithm GPT-Pro
+class: backend.strategies.gpt_pro.strategy.GptProStrategy
+enabled: true
+symbols: [SPY, QQQ, AAPL, MSFT, NVDA]   # also the momentum-ranking universe
+interval: 1h
+allowed_regimes: [TREND_UP]             # spec: benchmark uptrend only
+opt_in_high_vol: false
+risk_per_trade_pct: 0.5                 # spec: risk_per_trade = 0.005 of equity
+validation_overrides:
+  volume_confirmation:
+    skip: true    # spec has no volume-at-entry rule — liquidity is enforced by
+                  # the ADV universe filter inside the strategy
+parameters:
+  benchmark_symbol: SPY
+  # universe filter (spec: close > 5, ADV_20 > $20M, ATR_20/close < 0.08)
+  min_price: 5.0
+  min_average_dollar_volume: 20000000
+  max_atr_fraction: 0.08
+  adv_days: 20
+  atr_days: 20
+  # momentum (12-1: skip the most recent month, top quintile of the universe)
+  momentum_lookback_days: 252
+  momentum_skip_days: 21
+  momentum_percentile_min: 0.80
+  # market + trend filters
+  market_sma_days: 200
+  trend_sma_fast_days: 50
+  trend_sma_mid_days: 100
+  trend_sma_slow_days: 200
+  # pullback + breakout entry
+  pullback_sma_days: 10
+  tick_size: 0.01
+  # exits (stop = risk engine ATR stop; target_R rides in signal metadata)
+  target_r_multiple: 1.25
+  max_holding_days: 60
+  bars_per_day: 6      # session 1h bars per day — time stop = days * bars
+  use_trend_exit: false
+  trend_exit_sma_days: 20

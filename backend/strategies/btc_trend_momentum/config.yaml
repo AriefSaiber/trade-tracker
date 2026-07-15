@@ -1,0 +1,39 @@
+# BTC Trend Momentum — Donchian breakout with daily EMA trend filter.
+# Crypto-native: 24/7 session, fractional sizing, long AND short. Regime is
+# anchored on BTC itself (regime_benchmark), not the equity benchmark.
+#
+# NOTE (MVP §11–12): this strategy inherits NO trust from the equity side.
+# It must earn Gate A via walk-forward + Monte Carlo on crypto data like any
+# new strategy; paper trading it now is evidence-gathering, not promotion.
+strategy_id: btc_trend_momentum
+name: BTC Trend Momentum (Donchian breakout)
+class: backend.strategies.btc_trend_momentum.strategy.BtcTrendMomentumStrategy
+enabled: true
+symbols: [BTC/USD]
+interval: 1h
+regime_benchmark: BTC/USD        # ADX/EMA/vol regime computed on BTC daily bars
+allowed_regimes: [TREND_UP, TREND_DOWN]   # shorts need TREND_DOWN open
+opt_in_high_vol: false           # top-decile vol still blocks entries (survival)
+allow_short: true                # paper broker supports shorts; Alpaca live
+                                 # spot crypto does NOT — revisit before live
+risk_per_trade_pct: 0.5          # crypto vol: risk less per trade than equities
+validation_overrides:
+  data_sanity:
+    min_volume: 0.000001         # crypto volume is in coins, not shares
+  volume_confirmation:
+    skip: true                   # single-venue rvol is noise for crypto
+  confluence_score:
+    threshold: 60                # breakout entries structurally zero the
+                                 # sr_distance component (price at the extreme)
+  event_filter:
+    skip: true                   # no session opens/closes or earnings 24/7
+parameters:
+  donchian_period: 55            # breakout channel (hourly bars, ~2.3 days)
+  exit_channel_period: 20        # exit on close through opposite 20-bar extreme
+  daily_ema_fast: 50
+  daily_ema_slow: 200
+  atr_period: 14
+  breakout_buffer_atr: 0.0       # optional extra ATRs beyond the channel
+  min_history_bars: 80
+  take_profit_r_multiple: 3.0    # trend trades: let winners run past 2R
+  max_holding_bars: 240          # time stop: ~10 days of hourly bars

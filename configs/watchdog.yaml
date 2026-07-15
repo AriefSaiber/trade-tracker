@@ -1,0 +1,18 @@
+# Unattended-operation safeguards (MVP §13) — no magic numbers in code.
+heartbeat:
+  timeout_seconds: 30            # a component silent longer than this => halt + alert
+  check_interval_seconds: 5      # how often the monitor loop evaluates heartbeats
+  # Components expected to be alive. A listed component that has NEVER beat is
+  # treated as overdue (fail flat: don't trade until every component is up).
+  # Leave empty to only watch components that have beat at least once.
+  components:
+    - worker
+
+kill_switch:
+  file_path: data/KILL           # `touch data/KILL` trips the switch
+  flatten_on_trigger: false      # cancel orders always; flatten only if true
+
+staleness:
+  interval_multiplier: 2.0       # quote older than 2x the strategy interval => block entries
+  hard_limit_multiplier: 6.0     # quote older than this * interval WITH open positions => act
+  on_hard_limit: hold_with_alert # hold_with_alert | auto_flatten

@@ -1,0 +1,124 @@
+name: algotrader
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.15.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-algotrader}
+      POSTGRES_USER: ${POSTGRES_USER:-algotrader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algotrader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # localhost only — nothing exposed to the network
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      LIVE_TRADING: "false"   # compose-level default; .env cannot silently arm live
+      WORKER_EMBEDDED: "false"  # the worker is its own container here
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+      - ../data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    ports:
+      - "127.0.0.1:8000:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command: ["python", "-m", "backend.worker"]
+    env_file: ../.env
+    environment:
+      LIVE_TRADING: "false"
+      WORKER_EMBEDDED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+      - ../data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  # Optional, read-only, network-isolated from broker path. Off by default:
+  #   docker compose --profile analyst up -d
+  ai_analyst:
+    profiles: ["analyst"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    command: ["python", "-m", "backend.ai_analyst.service"]
+    restart: unless-stopped
+    env_file: ../.env
+    networks:
+      - analyst_net
+    volumes:
+      - ../logs:/app/logs
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  default:
+  analyst_net:
+    # ai_analyst has no route to broker-adapter services (MVP §4.2 / CLAUDE.md §9)
+    internal: false

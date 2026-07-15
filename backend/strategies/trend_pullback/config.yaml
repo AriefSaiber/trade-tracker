@@ -1,0 +1,17 @@
+strategy_id: trend_pullback
+class: backend.strategies.trend_pullback.strategy.TrendPullbackStrategy
+enabled: true
+symbols: [SPY, QQQ, AAPL, MSFT, NVDA]
+interval: 1h
+allowed_regimes: [TREND_UP]
+opt_in_high_vol: false
+risk_per_trade_pct: 0.75
+validation_overrides:
+  volume_confirmation:
+    skip: false
+parameters:
+  daily_ema_period: 200
+  pullback_ema_period: 20
+  rsi_period: 14
+  rsi_resume_min: 50
+  min_history_bars: 60

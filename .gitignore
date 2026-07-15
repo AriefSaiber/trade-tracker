@@ -1,0 +1,33 @@
+# Secrets — never commit
+.env
+.env.local
+*.pem
+*.key
+.claude
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Data & runtime state
+data/
+logs/
+backups/
+*.db
+
+# IDE
+.idea/
+.vscode/
+.DS_Store

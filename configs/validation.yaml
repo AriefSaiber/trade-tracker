@@ -1,0 +1,67 @@
+# Signal Validation Pipeline — stages 0..7 (stage 8 ml_gate is Phase 2).
+# Every threshold used by any stage lives here.
+pipeline:
+  stages:
+    - data_sanity
+    - regime_gate
+    - mtf_alignment
+    - volume_confirmation
+    - volatility_band
+    - confluence_score
+    - event_filter
+    - portfolio_correlation
+
+data_sanity:
+  max_bar_age_multiplier: 2.0
+  max_gap_bars: 3
+  min_volume: 1
+
+regime_gate:
+  high_vol_blocks_all: true        # HIGH_VOL blocks entries unless strategy opts in
+
+mtf_alignment:
+  long_requires_above_daily_ema: 200
+  long_requires_rising_hourly_ema: 50
+  ema_slope_lookback: 5
+
+volume_confirmation:
+  relative_volume_min: 1.2
+  rvol_lookback_bars: 20
+  require_obv_agreement: true
+
+volatility_band:
+  atr_period: 14
+  percentile_min: 20
+  percentile_max: 90
+  percentile_lookback_days: 252
+
+confluence_score:
+  threshold: 70
+  weights:
+    htf_trend_agreement: 25
+    momentum_agreement: 20
+    volume_strength: 15
+    sr_distance: 15
+    market_breadth: 15
+    volatility_position: 10
+  momentum:
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+  sr_distance_atr_min: 1.0
+
+event_filter:
+  session_open_blackout_minutes: 15
+  session_close_blackout_minutes: 10
+  earnings_blackout_days: 2
+  macro_blackout_dates: []          # e.g. ["2026-07-29"]  FOMC, CPI
+
+portfolio_correlation:
+  max_heat_pct: 5.0
+  max_correlation: 0.7
+  correlation_lookback_days: 60
+  max_sector_exposure_pct: 30.0
+
+ml_gate:                            # Phase 2 — disabled
+  enabled: false
+  min_p_win: 0.58
