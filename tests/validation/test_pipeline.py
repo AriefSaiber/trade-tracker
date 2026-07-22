@@ -51,6 +51,20 @@ def test_rejected_signal_short_circuits_and_logs(signal, now):
     assert journal.entries[-1]["payload"]["stage"] == "regime_gate"
 
 
+def test_rejected_signal_can_collect_non_executing_diagnostics(signal, now):
+    pipeline, _ = _pipeline()
+    ctx = _passing_ctx(now)
+    ctx.regime.regime = Regime.RANGE
+
+    assert pipeline.validate(signal, ctx, collect_diagnostics=True) is None
+    records = pipeline.funnel.records
+    assert len(records) == len(YAML_STAGE_ORDER)
+    assert records[1]["stage"] == "regime_gate"
+    assert records[1]["diagnostic"] is False
+    assert all(record["diagnostic"] for record in records[2:])
+    assert any(record["stage"] == "confluence_score" for record in records)
+
+
 def test_every_funnel_record_has_measured_and_thresholds(signal, now):
     pipeline, _ = _pipeline()
     pipeline.validate(signal, _passing_ctx(now))

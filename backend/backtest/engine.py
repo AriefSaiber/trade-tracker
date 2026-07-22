@@ -52,6 +52,28 @@ def _bars_to_frame(bars: list[Bar]) -> pd.DataFrame:
     return df.sort_index()
 
 
+def _point_in_time_history(
+    history: dict[tuple[str, str], pd.DataFrame],
+    now: datetime,
+    signal_interval: str,
+) -> dict[tuple[str, str], pd.DataFrame]:
+    """Return data available when an interval bar has closed.
+
+    Providers stamp bars at their open. An intraday decision must therefore
+    not see the fully formed daily OHLCV row for the same calendar day. Daily
+    strategies are evaluated at their own bar close and retain that row.
+    """
+    ts = pd.Timestamp(now)
+    session_start = ts.normalize()
+    point_in_time: dict[tuple[str, str], pd.DataFrame] = {}
+    for key, df in history.items():
+        frame = df.iloc[:df.index.searchsorted(ts, side="right")]
+        if signal_interval != "1d" and key[1] == "1d":
+            frame = frame.iloc[:frame.index.searchsorted(session_start, side="left")]
+        point_in_time[key] = frame
+    return point_in_time
+
+
 class EventDrivenEngine:
     def __init__(
         self,
@@ -86,6 +108,7 @@ class EventDrivenEngine:
                               regime=Regime.TRANSITION, history={})
         self._strategy.initialize(self._strategy_cfg, ctx)
         bars_held: dict[str, int] = {}
+        regime_cache: tuple[pd.Timestamp, RegimeState] | None = None
 
         for bar in signal_bars:
             now = bar.timestamp
@@ -95,18 +118,23 @@ class EventDrivenEngine:
             # instead of O(n) per bar — the difference between a crypto
             # backtest finishing in seconds vs. rebuilding a 26k-row mask on
             # every one of 26k bars.
-            ts = pd.Timestamp(now)
-            pit = {key: df.iloc[:df.index.searchsorted(ts, side="right")]
-                   for key, df in history.items()}
+            pit = _point_in_time_history(history, now, interval)
             marks = {bar.symbol: bar.close}
 
             daily_bench = pit.get((self._benchmark, "1d"), pd.DataFrame())
             daily_sym = pit.get((bar.symbol, "1d"), pd.DataFrame())
-            regime_state = (
-                self._regime.classify(daily_bench, self._benchmark, as_of=now)
-                if len(daily_bench) >= 60
-                else RegimeState(self._benchmark, Regime.TRANSITION, now)
-            )
+            if len(daily_bench) < 60:
+                regime_state = RegimeState(self._benchmark, Regime.TRANSITION, now)
+            else:
+                marker = pd.Timestamp(daily_bench.index[-1])
+                if regime_cache is not None and regime_cache[0] == marker:
+                    cached = regime_cache[1]
+                    regime_state = RegimeState(
+                        self._benchmark, cached.regime, now, dict(cached.metrics))
+                else:
+                    regime_state = self._regime.classify(
+                        daily_bench, self._benchmark, as_of=now)
+                    regime_cache = (marker, regime_state)
 
             # stops/targets resolve intrabar, before the close-of-bar decision
             self._check_stops(bar)
@@ -148,7 +176,7 @@ class EventDrivenEngine:
                 open_positions=list(self.portfolio.positions.values()),
                 equity=self.portfolio.equity(marks),
             )
-            validated = self._pipeline.validate(signal, vctx)
+            validated = self._pipeline.validate(signal, vctx, collect_diagnostics=True)
             if validated is None:
                 self.portfolio.snapshot_equity(now, marks)
                 continue

@@ -54,6 +54,10 @@ class StalenessMonitor:
         self._interval_s: dict[str, float] = {}
         self.entries_blocked = False
         self.stale_symbols: list[str] = []
+        # Avoid publishing the same alert on every watchdog tick.  The
+        # safety state is still evaluated on every tick; only unchanged
+        # notifications are coalesced until the stale set/action changes.
+        self._last_alert_signature: tuple[tuple[str, ...], tuple[str, ...], str] | None = None
 
     def record_quote(self, symbol: str, at: datetime, interval: str) -> None:
         """Record the timestamp of the latest quote/bar for `symbol`."""
@@ -99,7 +103,8 @@ class StalenessMonitor:
         if stale:
             log.warning("data_stale_entries_blocked", stale=stale,
                         hard_stale=hard, action=action)
-            if self._bus is not None:
+            signature = (tuple(stale), tuple(hard), action)
+            if self._bus is not None and signature != self._last_alert_signature:
                 await self._bus.publish(TOPIC_ALERT, {
                     "level": "critical" if hard and has_open_positions else "warning",
                     "source": "watchdog.staleness",
@@ -108,6 +113,10 @@ class StalenessMonitor:
                     "action": action,
                     "at": now.isoformat(),
                 })
+            self._last_alert_signature = signature
+        else:
+            # Permit a fresh alert if the same symbols become stale again.
+            self._last_alert_signature = None
 
         if action == "auto_flatten" and flatten is not None:
             log.critical("data_stale_auto_flatten", hard_stale=hard)

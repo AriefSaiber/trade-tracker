@@ -13,10 +13,20 @@ class MtfAlignmentStage(ValidationStage):
     def validate(self, signal: Signal, context: ValidationContext) -> StageResult:
         if signal.direction == "FLAT":
             return self._skipped("exit signal")
+        if bool(self._override(context, "skip", False)):
+            return self._skipped("skipped by strategy config")
 
-        daily_ema_p = int(self.config["long_requires_above_daily_ema"])
-        hourly_ema_p = int(self.config["long_requires_rising_hourly_ema"])
-        slope_lb = int(self.config["ema_slope_lookback"])
+        daily_ema_p = int(self._override(
+            context, "daily_ema_period",
+            self.config["long_requires_above_daily_ema"],
+        ))
+        hourly_ema_p = int(self._override(
+            context, "hourly_ema_period",
+            self.config["long_requires_rising_hourly_ema"],
+        ))
+        slope_lb = int(self._override(
+            context, "ema_slope_lookback", self.config["ema_slope_lookback"],
+        ))
 
         daily = context.bars(signal.symbol, "1d")
         hourly = context.bars(signal.symbol, "1h")

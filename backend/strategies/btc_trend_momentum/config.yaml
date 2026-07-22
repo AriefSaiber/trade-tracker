@@ -14,6 +14,9 @@ interval: 1h
 regime_benchmark: BTC/USD        # ADX/EMA/vol regime computed on BTC daily bars
 allowed_regimes: [TREND_UP, TREND_DOWN]   # shorts need TREND_DOWN open
 opt_in_high_vol: false           # top-decile vol still blocks entries (survival)
+# Avoid repeatedly reporting the same unvalidated breakout while its regime
+# has not changed; six 1h bars preserves a fresh re-test later in the day.
+rejection_cooldown_bars: 6
 allow_short: true                # paper broker supports shorts; Alpaca live
                                  # spot crypto does NOT — revisit before live
 risk_per_trade_pct: 0.5          # crypto vol: risk less per trade than equities

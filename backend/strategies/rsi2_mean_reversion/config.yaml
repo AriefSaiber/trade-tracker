@@ -7,6 +7,11 @@ allowed_regimes: [TREND_UP, RANGE]
 opt_in_high_vol: false
 risk_per_trade_pct: 0.5
 validation_overrides:
+  mtf_alignment:
+    # RSI2 is a daily mean-reversion strategy. Requiring a rising 1h EMA is
+    # a lower-timeframe trend check and vetoes the very pullbacks it targets.
+    # Its own daily EMA(200) condition remains the trend guard.
+    skip: true
   volume_confirmation:
     skip: true      # mean-reversion entries legitimately fire on volume dry-ups
 parameters:

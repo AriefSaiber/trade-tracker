@@ -103,6 +103,8 @@ class StrategySlot:
         self.symbol = symbol
         self.strategy_id = str(config["strategy_id"])
         self.interval = str(config["interval"])
+        self.rejection_cooldown_bars = max(
+            0, int(config.get("rejection_cooldown_bars", 0)))
         # crypto strategies anchor regime on their own market (e.g. BTC/USD),
         # not the equity benchmark — empty string means "use the global one"
         self.regime_benchmark = str(config.get("regime_benchmark") or "")
@@ -167,7 +169,10 @@ class TradingRuntime:
         self.provider = provider or self._build_provider()
         self.benchmark = str(self._market.get("benchmark_symbol", "SPY"))
         self.journal = TradeJournal()
-        self.funnel = FunnelLogger(self.journal)
+        self.funnel = FunnelLogger(
+            self.journal,
+            max_records=int(self._worker_cfg.get("worker.validation_funnel_cap", 2_000)),
+        )
         self.pipeline = SignalValidationPipeline(funnel=self.funnel)
         self.risk = RiskEngine()
         self.detector = RegimeDetector(bus=self.bus)
@@ -216,10 +221,12 @@ class TradingRuntime:
         self._bars_held: dict[str, int] = {}
         self._consec_losses: dict[str, int] = {}
         self._cooldown_until: dict[str, datetime] = {}
+        self._rejection_cooldowns: dict[tuple[str, str, str, str], datetime] = {}
         self._seen_trades = 0
         self._signal_log: list[dict] = []
         self._alert_log: list[dict] = []
         self._regime_state: RegimeState | None = None
+        self._regime_cache: dict[str, tuple[pd.Timestamp, RegimeState]] = {}
         self._cycle = 0
         self._tasks: list[asyncio.Task] = []
         self.slots: list[StrategySlot] = []
@@ -457,6 +464,54 @@ class TradingRuntime:
             out[(symbol, interval)] = bars
         return out
 
+    def _regime_for(self, daily: pd.DataFrame, benchmark: str,
+                    as_of: datetime) -> RegimeState:
+        """Classify once per benchmark daily bar, not once per strategy slot."""
+        if len(daily) < 60:
+            return RegimeState(benchmark, Regime.TRANSITION, as_of)
+        marker = pd.Timestamp(daily.index[-1])
+        cached = self._regime_cache.get(benchmark)
+        if cached is not None and cached[0] == marker:
+            state = cached[1]
+            return RegimeState(benchmark, state.regime, as_of, dict(state.metrics))
+        state = self.detector.classify(daily, benchmark, as_of=as_of)
+        self._regime_cache[benchmark] = (marker, state)
+        return state
+
+    @staticmethod
+    def _rejection_key(signal: Signal, regime_state: RegimeState) -> tuple[str, str, str, str]:
+        return (signal.strategy_id, signal.symbol, signal.direction, regime_state.regime.value)
+
+    def _rejection_is_on_cooldown(self, slot: StrategySlot, signal: Signal,
+                                  regime_state: RegimeState) -> bool:
+        if slot.rejection_cooldown_bars <= 0:
+            return False
+        until = self._rejection_cooldowns.get(self._rejection_key(signal, regime_state))
+        return until is not None and signal.bar_time <= until
+
+    def _remember_rejection(self, slot: StrategySlot, signal: Signal,
+                            regime_state: RegimeState) -> None:
+        if slot.rejection_cooldown_bars <= 0:
+            return
+        seconds = interval_to_seconds(slot.interval) * slot.rejection_cooldown_bars
+        self._rejection_cooldowns[self._rejection_key(signal, regime_state)] = (
+            signal.bar_time + timedelta(seconds=seconds)
+        )
+
+    def _journal_suppressed_signal(self, signal: Signal, regime_state: RegimeState) -> None:
+        reason = "duplicate rejected setup remains on cooldown"
+        self.journal.record("signal_suppressed", {
+            "bar_time": signal.bar_time.isoformat(),
+            "strategy_id": signal.strategy_id,
+            "symbol": signal.symbol,
+            "direction": signal.direction,
+            "regime": regime_state.regime.value,
+            "reason": reason,
+        })
+        log.info("signal_suppressed", strategy_id=signal.strategy_id,
+                 symbol=signal.symbol, regime=regime_state.regime.value,
+                 reason=reason)
+
     # ── per-bar decision path (identical shape to backtester) ──────────────
     async def _process_bar(self, slot: StrategySlot, bar: Bar) -> None:
         now = self.now
@@ -466,11 +521,7 @@ class TradingRuntime:
 
         benchmark = slot.regime_benchmark or self.benchmark
         daily_bench = pit.get((benchmark, "1d"), pd.DataFrame())
-        regime_state = (
-            self.detector.classify(daily_bench, benchmark, as_of=now)
-            if len(daily_bench) >= 60
-            else RegimeState(benchmark, Regime.TRANSITION, now)
-        )
+        regime_state = self._regime_for(daily_bench, benchmark, now)
         if benchmark == self.benchmark:
             # dashboard regime widget keeps tracking the global benchmark
             self._regime_state = regime_state
@@ -509,6 +560,10 @@ class TradingRuntime:
             await self._execute_exit(signal, regime_state=regime_state)
             return
 
+        if self._rejection_is_on_cooldown(slot, signal, regime_state):
+            self._journal_suppressed_signal(signal, regime_state)
+            return
+
         from backend.validation.context import ValidationContext
         vctx = ValidationContext(
             now=now, regime=regime_state, benchmark_symbol=benchmark,
@@ -516,9 +571,9 @@ class TradingRuntime:
             open_positions=list(self.portfolio.positions.values()),
             equity=self.portfolio.equity(marks),
         )
-        validated = self.pipeline.validate(signal, vctx)
+        validated = self.pipeline.validate(signal, vctx, collect_diagnostics=True)
         if validated is None:
-            await self._journal_rejection(signal)
+            await self._journal_rejection(signal, slot, regime_state)
             return
         self.journal.record("signal_validated", {
             "strategy_id": signal.strategy_id, "symbol": signal.symbol,
@@ -707,20 +762,39 @@ class TradingRuntime:
             })
 
     # ── journaling / dashboard state ───────────────────────────────────────
-    async def _journal_rejection(self, signal: Signal) -> None:
-        failing = next(
-            (r for r in reversed(self.funnel.records)
-             if r["bar_time"] == signal.bar_time.isoformat() and not r["passed"]),
-            None,
-        )
+    async def _journal_rejection(self, signal: Signal, slot: StrategySlot,
+                                 regime_state: RegimeState) -> None:
+        matching = [
+            r for r in self.funnel.records
+            if r["bar_time"] == signal.bar_time.isoformat()
+            and r["strategy_id"] == signal.strategy_id
+            and r["symbol"] == signal.symbol
+            and r["direction"] == signal.direction
+        ]
+        # The first failure is the execution decision. Later failures are
+        # diagnostics only and must not replace the dashboard's primary reason.
+        failing = next((r for r in matching if not r["passed"]), None)
         stage = failing["stage"] if failing else "unknown"
         reason = failing["reason"] if failing else "unknown"
+        confluence = next(
+            (r for r in matching if r["stage"] == "confluence_score"), None,
+        )
+        score = (float(confluence["measured"]["score"])
+                 if confluence and "score" in confluence["measured"] else None)
+        diagnostic_failures = [
+            {"stage": r["stage"], "reason": r["reason"]}
+            for r in matching
+            if not r["passed"] and r.get("diagnostic", False)
+        ]
         self.journal.record("signal_rejected", {
             "bar_time": signal.bar_time.isoformat(), "phase": "validation",
-            "stage": stage, "reason": reason,
+            "stage": stage, "reason": reason, "score": score,
+            "diagnostic_failures": diagnostic_failures,
         })
-        self._log_signal_row(signal, score=None, validated=False,
-                             stage_failed=stage, reason=reason)
+        self._log_signal_row(signal, score=score, validated=False,
+                             stage_failed=stage, reason=reason,
+                             diagnostic_failures=diagnostic_failures)
+        self._remember_rejection(slot, signal, regime_state)
         if stage == "data_sanity":
             # MVP §8 stage 0: failure drops the signal AND fires a data alert
             await self.bus.publish(TOPIC_ALERT, {
@@ -732,7 +806,8 @@ class TradingRuntime:
 
     def _log_signal_row(self, signal: Signal, score: float | None,
                         validated: bool, stage_failed: str | None = None,
-                        reason: str | None = None) -> None:
+                        reason: str | None = None,
+                        diagnostic_failures: list[dict] | None = None) -> None:
         row = {
             "strategy_id": signal.strategy_id, "symbol": signal.symbol,
             "direction": signal.direction, "score": score,
@@ -741,17 +816,25 @@ class TradingRuntime:
         if stage_failed:
             row["stage_failed"] = stage_failed
             row["reason"] = reason
+        if diagnostic_failures:
+            row["diagnostic_failures"] = diagnostic_failures
         self._signal_log.append(row)
         cap = int(self._worker_cfg.get("worker.signal_log_cap", 200))
         del self._signal_log[:-cap]
 
     def _funnel_summary(self) -> list[dict]:
         stages = [s.name for s in self.pipeline._stages]
-        counts = {s: {"stage": s, "passed": 0, "failed": 0} for s in stages}
+        counts = {
+            s: {"stage": s, "passed": 0, "failed": 0, "diagnostic": 0}
+            for s in stages
+        }
         for rec in self.funnel.records:
             bucket = counts.get(rec["stage"])
             if bucket is not None:
-                bucket["passed" if rec["passed"] else "failed"] += 1
+                if rec.get("diagnostic", False):
+                    bucket["diagnostic"] += 1
+                else:
+                    bucket["passed" if rec["passed"] else "failed"] += 1
         return [counts[s] for s in stages]
 
     def _strategy_rows(self) -> list[dict]:

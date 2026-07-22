@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from backend.backtest.cost_model import CostModel
-from backend.backtest.engine import BacktestResult, EventDrivenEngine
+from backend.backtest.engine import BacktestResult, EventDrivenEngine, _point_in_time_history
 from backend.core.config import YamlConfig, load_yaml_config
 from backend.core.events import Bar, Signal, ValidatedSignal
 from backend.regime.detector import RegimeDetector
@@ -79,7 +79,8 @@ class _PassThroughPipeline:
     def __init__(self) -> None:
         self.funnel = SimpleNamespace(records=[])
 
-    def validate(self, signal: Signal, ctx: ValidationContext) -> ValidatedSignal:
+    def validate(self, signal: Signal, ctx: ValidationContext,
+                 *, collect_diagnostics: bool = False) -> ValidatedSignal:
         return ValidatedSignal(
             signal=signal,
             score=100.0,
@@ -164,3 +165,21 @@ def test_engine_deterministic_across_3_runs():
         assert asdict(other.metrics) == first_metrics
         assert other.portfolio.equity_curve == first_curve
         assert other.portfolio.closed_trades == first_trades
+
+
+def test_intraday_backtest_excludes_same_day_daily_bar():
+    now = datetime(2026, 3, 2, 15, 0, tzinfo=timezone.utc)
+    daily = pd.DataFrame(
+        {"close": [100.0, 110.0]},
+        index=pd.DatetimeIndex([
+            datetime(2026, 2, 27, tzinfo=timezone.utc),
+            datetime(2026, 3, 2, tzinfo=timezone.utc),
+        ]),
+    )
+    history = {(SYMBOL, "1d"): daily}
+
+    intraday = _point_in_time_history(history, now, "1h")
+    daily_signal = _point_in_time_history(history, now, "1d")
+
+    assert list(intraday[(SYMBOL, "1d")]["close"]) == [100.0]
+    assert list(daily_signal[(SYMBOL, "1d")]["close"]) == [100.0, 110.0]

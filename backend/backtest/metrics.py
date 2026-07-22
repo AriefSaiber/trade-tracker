@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 
 from backend.portfolio.portfolio import ClosedTrade
 
 TRADING_DAYS = 252
+SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
 
 
 @dataclass
@@ -26,6 +28,20 @@ class BacktestMetrics:
     longest_losing_streak: int
 
 
+def _curve_timing(equity_curve: list[tuple]) -> tuple[float, float]:
+    """Return (observations/year, elapsed years) from actual timestamps."""
+    if len(equity_curve) < 2:
+        return float(TRADING_DAYS), 1 / TRADING_DAYS
+    start = equity_curve[0][0]
+    end = equity_curve[-1][0]
+    if not isinstance(start, datetime) or not isinstance(end, datetime):
+        return float(TRADING_DAYS), max(len(equity_curve) / TRADING_DAYS, 1 / TRADING_DAYS)
+    elapsed_years = (end - start).total_seconds() / SECONDS_PER_YEAR
+    if elapsed_years <= 0:
+        return float(TRADING_DAYS), 1 / TRADING_DAYS
+    return max((len(equity_curve) - 1) / elapsed_years, 1.0), elapsed_years
+
+
 def compute_metrics(trades: list[ClosedTrade],
                     equity_curve: list[tuple], starting_cash: float) -> BacktestMetrics:
     pnls = np.array([t.pnl - t.commission for t in trades]) if trades else np.array([])
@@ -42,17 +58,17 @@ def compute_metrics(trades: list[ClosedTrade],
 
     equity = np.array([e for _, e in equity_curve]) if equity_curve else np.array([starting_cash])
     returns = np.diff(equity) / equity[:-1] if len(equity) > 1 else np.array([0.0])
-    sharpe = float(returns.mean() / returns.std() * np.sqrt(TRADING_DAYS)) \
+    observations_per_year, years = _curve_timing(equity_curve)
+    sharpe = float(returns.mean() / returns.std() * np.sqrt(observations_per_year)) \
         if returns.std() > 0 else 0.0
     downside = returns[returns < 0]
-    sortino = float(returns.mean() / downside.std() * np.sqrt(TRADING_DAYS)) \
+    sortino = float(returns.mean() / downside.std() * np.sqrt(observations_per_year)) \
         if len(downside) and downside.std() > 0 else 0.0
 
     peak = np.maximum.accumulate(equity)
     dd = (peak - equity) / peak
     max_dd = float(dd.max() * 100) if len(dd) else 0.0
 
-    years = max(len(equity) / TRADING_DAYS, 1 / TRADING_DAYS)
     cagr = (equity[-1] / equity[0]) ** (1 / years) - 1 if equity[0] > 0 else 0.0
     mar = float(cagr / (max_dd / 100)) if max_dd > 0 else 0.0
 

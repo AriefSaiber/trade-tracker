@@ -14,12 +14,14 @@ log = structlog.get_logger("validation.funnel")
 
 
 class FunnelLogger:
-    def __init__(self, journal: TradeJournal | None = None) -> None:
+    def __init__(self, journal: TradeJournal | None = None,
+                 max_records: int = 2_000) -> None:
         self.records: list[dict] = []
         self.journal = journal or TradeJournal()
+        self.max_records = max(1, max_records)
 
     def record(self, signal: Signal, result: StageResult,
-               thresholds: dict | None = None) -> None:
+               thresholds: dict | None = None, *, diagnostic: bool = False) -> None:
         entry = {
             "at": datetime.now(timezone.utc).isoformat(),
             "strategy_id": signal.strategy_id,
@@ -31,8 +33,12 @@ class FunnelLogger:
             "measured": result.measured,
             "thresholds": thresholds or {},
             "reason": result.reason,
+            # Stages after the first failure are evaluated only to learn about
+            # rejected candidates. They never affect an execution decision.
+            "diagnostic": diagnostic,
         }
         self.records.append(entry)
+        del self.records[:-self.max_records]
         self.journal.record("validation_stage", entry)
         log.info(
             "stage_result",

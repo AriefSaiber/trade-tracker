@@ -60,26 +60,49 @@ class SignalValidationPipeline:
             else:
                 self._stages.append(cls(stage_cfg))
 
-    def validate(self, signal: Signal, ctx: ValidationContext) -> ValidatedSignal | None:
-        """Returns a ValidatedSignal or None (rejected). All results logged."""
+    def validate(
+        self,
+        signal: Signal,
+        ctx: ValidationContext,
+        *,
+        collect_diagnostics: bool = False,
+    ) -> ValidatedSignal | None:
+        """Validate a candidate and optionally record non-executing diagnostics.
+
+        The first failed stage always decides whether an entry is rejected.
+        When ``collect_diagnostics`` is enabled, later stages still run and are
+        marked diagnostic so that rejected candidates can be analysed without
+        weakening the live trading gate.
+        """
         results: list[StageResult] = []
         score = 0.0
+        first_failure: StageResult | None = None
         for stage in self._stages:
             result = stage.validate(signal, ctx)
-            self.funnel.record(signal, result, thresholds=stage.config)
+            self.funnel.record(
+                signal,
+                result,
+                thresholds=stage.config,
+                diagnostic=first_failure is not None,
+            )
             results.append(result)
             if stage.name == "confluence_score" and "score" in result.measured:
                 score = float(result.measured["score"])
             if not result.passed:
-                log.info(
-                    "signal_rejected",
-                    strategy_id=signal.strategy_id,
-                    symbol=signal.symbol,
-                    stage=result.stage,
-                    reason=result.reason,
-                    measured=result.measured,
-                )
-                return None
+                first_failure = first_failure or result
+                if not collect_diagnostics:
+                    break
+
+        if first_failure is not None:
+            log.info(
+                "signal_rejected",
+                strategy_id=signal.strategy_id,
+                symbol=signal.symbol,
+                stage=first_failure.stage,
+                reason=first_failure.reason,
+                measured=first_failure.measured,
+            )
+            return None
 
         validated = ValidatedSignal(
             signal=signal,

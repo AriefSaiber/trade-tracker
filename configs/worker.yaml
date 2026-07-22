@@ -13,6 +13,7 @@ worker:
   equity_curve_cap: 500        # points of equity curve published to the dashboard
   signal_log_cap: 200          # recent signal rows kept in dashboard state
   alert_log_cap: 100
+  validation_funnel_cap: 2000 # bounded in-memory diagnostics; full history is journaled
 
 persistence:
   flush_seconds: 5.0           # journal/portfolio flush cadence to the database

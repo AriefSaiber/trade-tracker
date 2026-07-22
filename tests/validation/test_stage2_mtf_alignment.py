@@ -38,3 +38,15 @@ def test_short_with_downtrend_passes(signal, now):
     signal.direction = "SHORT"
     ctx = _ctx(now, make_daily_frame(trend=-0.0025), make_hourly_frame(trend=-0.001))
     assert MtfAlignmentStage(CFG).validate(signal, ctx).passed
+
+
+def test_strategy_can_skip_mtf_when_its_own_trend_filter_is_authoritative(signal, now):
+    ctx = _ctx(now, make_daily_frame(days=1), make_hourly_frame(hours=1))
+    ctx.strategy_config = {
+        "strategy_id": "rsi2_mean_reversion",
+        "interval": "1d",
+        "validation_overrides": {"mtf_alignment": {"skip": True}},
+    }
+    result = MtfAlignmentStage(CFG).validate(signal, ctx)
+    assert result.passed
+    assert result.reason == "skipped by strategy config"

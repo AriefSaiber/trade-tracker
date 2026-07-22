@@ -35,3 +35,12 @@ def test_default_journal_created_when_none_given(signal):
     funnel = FunnelLogger()
     funnel.record(signal, StageResult("data_sanity", True, {}, "ok"))
     assert len(funnel.journal.entries) == 1
+
+
+def test_records_are_bounded_but_journal_retains_every_event(signal):
+    journal = TradeJournal()
+    funnel = FunnelLogger(journal, max_records=2)
+    for n in range(3):
+        funnel.record(signal, StageResult(f"stage_{n}", True, {}, "ok"))
+    assert [record["stage"] for record in funnel.records] == ["stage_1", "stage_2"]
+    assert len(journal.entries) == 3

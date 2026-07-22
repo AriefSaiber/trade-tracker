@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -26,6 +26,18 @@ def test_losing_streak():
               make_trade(-50), make_trade(100)]
     m = compute_metrics(trades, [], 100_000)
     assert m.longest_losing_streak == 3
+
+
+def test_mar_uses_actual_equity_curve_duration_not_observation_count():
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    curve = [
+        (start, 100_000.0),
+        (start + timedelta(days=182), 90_000.0),
+        (start + timedelta(days=365), 110_000.0),
+    ]
+    metrics = compute_metrics([], curve, 100_000.0)
+    # 10% CAGR over one year / 10% drawdown.
+    assert metrics.mar == pytest.approx(1.0, rel=0.02)
 
 
 def test_monte_carlo_deterministic_with_seed():
